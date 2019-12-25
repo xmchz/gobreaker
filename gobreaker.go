@@ -14,20 +14,20 @@ type State int
 
 // These constants are states of CircuitBreaker.
 const (
-	StateClosed State = iota
-	StateHalfOpen
-	StateOpen
+	StateClosed   State = iota // 闭合
+	StateHalfOpen              // 半开
+	StateOpen                  // 断路
 )
 
 var (
 	// ErrTooManyRequests is returned when the CB state is half open and the requests count is over the cb maxRequests
-	ErrTooManyRequests = errors.New("too many requests")
+	ErrTooManyRequests = errors.New("too many requests") // 半开状态时，请求过多
 	// ErrOpenState is returned when the CB state is open
-	ErrOpenState = errors.New("circuit breaker is open")
+	ErrOpenState = errors.New("circuit breaker is open") // 断路状态
 )
 
 // String implements stringer interface.
-func (s State) String() string {
+func (s State) String() string { // enum 实现 stringer
 	switch s {
 	case StateClosed:
 		return "closed"
@@ -44,12 +44,12 @@ func (s State) String() string {
 // CircuitBreaker clears the internal Counts either
 // on the change of the state or at the closed-state intervals.
 // Counts ignores the results of the requests sent before clearing.
-type Counts struct {
+type Counts struct { // 记录请求数
 	Requests             uint32
 	TotalSuccesses       uint32
 	TotalFailures        uint32
 	ConsecutiveSuccesses uint32
-	ConsecutiveFailures  uint32
+	ConsecutiveFailures  uint32	// 连续失败
 }
 
 func (c *Counts) onRequest() {
@@ -59,7 +59,7 @@ func (c *Counts) onRequest() {
 func (c *Counts) onSuccess() {
 	c.TotalSuccesses++
 	c.ConsecutiveSuccesses++
-	c.ConsecutiveFailures = 0
+	c.ConsecutiveFailures = 0	// 连续失败清0
 }
 
 func (c *Counts) onFailure() {
@@ -92,7 +92,7 @@ func (c *Counts) clear() {
 // after which the state of the CircuitBreaker becomes half-open.
 // If Timeout is less than or equal to 0, the timeout value of the CircuitBreaker is set to 60 seconds.
 //
-// ReadyToTrip is called with a copy of Counts whenever a request fails in the closed state.
+// ReadyToTrip is called with a copy of Counts whenever a request fails in the closed state. 闭合状态下，请求失败即会触发
 // If ReadyToTrip returns true, the CircuitBreaker will be placed into the open state.
 // If ReadyToTrip is nil, default ReadyToTrip is used.
 // Default ReadyToTrip returns true when the number of consecutive failures is more than 5.
@@ -108,6 +108,7 @@ type Settings struct {
 }
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
+// 熔断器是一个状态机模型，用于避免发送可能失败的请求
 type CircuitBreaker struct {
 	name          string
 	maxRequests   uint32
@@ -177,7 +178,7 @@ const defaultInterval = time.Duration(0) * time.Second
 const defaultTimeout = time.Duration(60) * time.Second
 
 func defaultReadyToTrip(counts Counts) bool {
-	return counts.ConsecutiveFailures > 5
+	return counts.ConsecutiveFailures > 5		// 连续失败超过5次，返回true，cb开始表演
 }
 
 // Name returns the name of the CircuitBreaker.
@@ -203,19 +204,19 @@ func (cb *CircuitBreaker) State() State {
 func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{}, error) {
 	generation, err := cb.beforeRequest()
 	if err != nil {
-		return nil, err
+		return nil, err // cb 拒绝了请求
 	}
 
 	defer func() {
 		e := recover()
 		if e != nil {
-			cb.afterRequest(generation, false)
+			cb.afterRequest(generation, false) // 在panic的情况下也要执行after
 			panic(e)
 		}
 	}()
 
-	result, err := req()
-	cb.afterRequest(generation, err == nil)
+	result, err := req()                    // 执行请求
+	cb.afterRequest(generation, err == nil) // after中统计请求结果
 	return result, err
 }
 
@@ -243,6 +244,7 @@ func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool), err error) 
 	}, nil
 }
 
+// 根据当前状态决定是否接受下一个请求
 func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
@@ -251,12 +253,12 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	state, generation := cb.currentState(now)
 
 	if state == StateOpen {
-		return generation, ErrOpenState
+		return generation, ErrOpenState // 断路
 	} else if state == StateHalfOpen && cb.counts.Requests >= cb.maxRequests {
-		return generation, ErrTooManyRequests
+		return generation, ErrTooManyRequests // 半开请求太多
 	}
 
-	cb.counts.onRequest()
+	cb.counts.onRequest() // 接受请求，计数+1
 	return generation, nil
 }
 
@@ -271,7 +273,7 @@ func (cb *CircuitBreaker) afterRequest(before uint64, success bool) {
 	}
 
 	if success {
-		cb.onSuccess(state, now)
+		cb.onSuccess(state, now) // 统计成功or失败
 	} else {
 		cb.onFailure(state, now)
 	}
@@ -305,11 +307,11 @@ func (cb *CircuitBreaker) currentState(now time.Time) (State, uint64) {
 	switch cb.state {
 	case StateClosed:
 		if !cb.expiry.IsZero() && cb.expiry.Before(now) {
-			cb.toNewGeneration(now)
+			cb.toNewGeneration(now) // 闭合状态时，如果超过了expiry(非零)，则进入下一代，重新统计数据
 		}
 	case StateOpen:
 		if cb.expiry.Before(now) {
-			cb.setState(StateHalfOpen, now)
+			cb.setState(StateHalfOpen, now) // 断路状态时，如果超过了expiry时间，则恢复到半开状态
 		}
 	}
 	return cb.state, cb.generation
@@ -340,11 +342,11 @@ func (cb *CircuitBreaker) toNewGeneration(now time.Time) {
 		if cb.interval == 0 {
 			cb.expiry = zero
 		} else {
-			cb.expiry = now.Add(cb.interval)
+			cb.expiry = now.Add(cb.interval) // 闭合状态，更新expiry为下一个interval后
 		}
 	case StateOpen:
-		cb.expiry = now.Add(cb.timeout)
+		cb.expiry = now.Add(cb.timeout) // 断路状态，expiry更新为timeout后
 	default: // StateHalfOpen
-		cb.expiry = zero
+		cb.expiry = zero // 半开状态，expiry为zero，即不清理count数据
 	}
 }

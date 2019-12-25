@@ -23,6 +23,7 @@ func init() {
 }
 
 // Get wraps http.Get in CircuitBreaker.
+// 使用cb包装请求
 func Get(url string) ([]byte, error) {
 	body, err := cb.Execute(func() (interface{}, error) {
 		resp, err := http.Get(url)
